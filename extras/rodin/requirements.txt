@@ -1,0 +1,6 @@
+requests>=2.31
+trimesh>=4.0
+numpy>=1.26
+# Opcionales para reparacion avanzada:
+# pymeshlab>=2023.12
+# fal-client>=0.4   # via fal.ai sin suscripcion Business
