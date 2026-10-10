@@ -1,32 +1,47 @@
 #!/usr/bin/env python3
-"""Prueba de concepto: interfaz web (Gradio) foto -> modelo 3D imprimible.
+"""Prueba de concepto: interfaz web (Gradio) foto -> figura 3D imprimible EN COLOR.
 
-Sube 1-5 fotos, elige un preset y obtendras:
-  - el modelo 3D con textura en un visor interactivo (GLB),
-  - el STL imprimible (estanco, escalado a la altura elegida) para descargar,
-  - un informe de imprimibilidad.
+Dos tipos de figura, ambos sin pintura a mano:
+  - REALISTA: modelo fiel a las fotos + pack de color (OBJ+MTL+textura) listo para
+    un servicio de impresion full-color (p. ej. JLC3DP resina full-color).
+  - CARTOON: la foto se estiliza primero con Gemini (muneco coleccionable cabezon,
+    colores planos) y el resultado se imprime en FDM multicolor (Bambu + AMS)
+    importando el pack de color en Bambu Studio.
+
+Salidas: visor 3D interactivo (GLB con textura), STL estanco escalado, ZIP de color
+e informe de imprimibilidad.
 
 Uso:
   pip install -r requirements.txt gradio pymeshfix
   export HYPER3D_API_KEY=...   # opcional; sin ella usa la clave de prueba 'vibecoding'
+  export GEMINI_API_KEY=...    # solo necesario para el modo cartoon
   python app.py [--share]      # --share crea un enlace publico temporal gradio.live
 """
 
+import base64
+import json
+import math
+import os
+import shutil
 import sys
 import tempfile
 import time
 from pathlib import Path
 
 import gradio as gr
+import requests
 import trimesh
 
 import mesh_check
 import rodin_pipeline
 
+MODO_REALISTA = "Realista — color para servicio de impresión (JLC3DP)"
+MODO_CARTOON = "Cartoon estilizado — FDM multicolor (Bambu AMS)"
+
 PRESETS = {
     "Borrador rápido (~30 s)": [
         "--tier", "Gen-2.5-Low", "--mesh-mode", "Raw", "--quality-override", "20000",
-        "--material", "Shaded", "--texture-mode", "low",
+        "--material", "PBR", "--texture-mode", "low",
     ],
     "Alta calidad (~2-4 min, 1M caras)": [
         "--tier", "Gen-2.5-High", "--mesh-mode", "Raw", "--quality", "high",
@@ -38,18 +53,99 @@ PRESETS = {
     ],
 }
 
+PROMPT_CARTOON = (
+    "Transforma la foto en una figura coleccionable estilo cartoon 3D: cabeza grande, "
+    "cuerpo pequeño, rasgos simplificados y amables, colores planos y vivos, cuerpo "
+    "completo de pie sobre una peana cilíndrica sencilla, fondo blanco uniforme, "
+    "iluminación suave de estudio, una sola figura centrada. Conserva el peinado, la "
+    "ropa y los rasgos reconocibles del sujeto de la foto."
+)
 
-def generar(files: list, preset: str, altura_mm: float, api_key: str,
-            progress=gr.Progress()):
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def _gemini_image_model(api_key: str) -> str:
+    """Modelo de imagen configurado, o autodescubierto si el configurado no existe."""
+    preferido = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image")
+    r = requests.get(f"{GEMINI_BASE}/models", params={"key": api_key}, timeout=30)
+    if r.status_code != 200:
+        return preferido
+    nombres = [m.get("name", "").removeprefix("models/") for m in r.json().get("models", [])
+               if "generateContent" in m.get("supportedGenerationMethods", [])]
+    if preferido in nombres:
+        return preferido
+    candidatos = [n for n in nombres if "image" in n and "embed" not in n]
+    if not candidatos:
+        raise gr.Error(f"No hay modelo de imagen disponible en esta clave de Gemini. "
+                       f"Modelos vistos: {nombres[:10]}")
+    return sorted(candidatos)[-1]
+
+
+def estilizar_cartoon(foto: Path, api_key: str, out_dir: Path) -> Path:
+    """Convierte la foto en imagen de figura cartoon con la API de Gemini."""
+    modelo = _gemini_image_model(api_key)
+    mime = "image/webp" if foto.suffix.lower() == ".webp" else (
+        "image/png" if foto.suffix.lower() == ".png" else "image/jpeg")
+    payload = {
+        "contents": [{
+            "parts": [
+                {"inline_data": {"mime_type": mime,
+                                 "data": base64.b64encode(foto.read_bytes()).decode()}},
+                {"text": PROMPT_CARTOON},
+            ]
+        }]
+    }
+    r = requests.post(f"{GEMINI_BASE}/models/{modelo}:generateContent",
+                      params={"key": api_key}, json=payload, timeout=300)
+    if r.status_code != 200:
+        raise gr.Error(f"Gemini ({modelo}) devolvió HTTP {r.status_code}: {r.text[:300]}")
+    try:
+        parts = r.json()["candidates"][0]["content"]["parts"]
+    except (KeyError, IndexError):
+        raise gr.Error(f"Respuesta inesperada de Gemini: {json.dumps(r.json())[:300]}")
+    for part in parts:
+        blob = part.get("inline_data") or part.get("inlineData")
+        if blob and blob.get("data"):
+            dest = out_dir / "cartoon.png"
+            dest.write_bytes(base64.b64decode(blob["data"]))
+            return dest
+    texto = " ".join(p.get("text", "") for p in parts)[:300]
+    raise gr.Error(f"Gemini no devolvió imagen (modelo {modelo}). Respuesta: {texto}")
+
+
+def exportar_pack_color(glb: Path, out_dir: Path) -> Path:
+    """GLB -> carpeta con OBJ+MTL+textura -> ZIP (valido para JLC3DP y Bambu Studio)."""
+    pack = out_dir / "pack_color"
+    pack.mkdir(exist_ok=True)
+    m = trimesh.load(str(glb), force="mesh")  # conserva TextureVisuals
+    m.export(str(pack / "modelo.obj"))        # escribe tambien .mtl y la textura
+    return Path(shutil.make_archive(str(out_dir / "pack_color"), "zip", pack))
+
+
+def generar(files: list, modo: str, preset: str, altura_mm: float,
+            api_key: str, gemini_key: str, progress=gr.Progress()):
     if not files:
-        raise gr.Error("Sube al menos una foto (idealmente frontal + perfiles).")
+        raise gr.Error("Sube al menos una foto.")
     if len(files) > 5:
         raise gr.Error("Máximo 5 imágenes.")
+    paths = [Path(f if isinstance(f, str) else f.name) for f in files]
 
     out_dir = Path(tempfile.mkdtemp(prefix="rodin_"))
+    imagen_estilizada = None
+
+    # Modo cartoon: estilizar la primera foto con Gemini antes de Rodin.
+    if modo == MODO_CARTOON:
+        gkey = gemini_key.strip() or os.environ.get("GEMINI_API_KEY", "")
+        if not gkey:
+            raise gr.Error("El modo cartoon necesita una clave de Gemini "
+                           "(campo de la izquierda o variable GEMINI_API_KEY).")
+        progress(0.02, desc="Estilizando la foto con Gemini…")
+        imagen_estilizada = estilizar_cartoon(paths[0], gkey, out_dir)
+        paths = [imagen_estilizada]
+
     argv = []
-    for f in files:
-        argv += ["--image", f if isinstance(f, str) else f.name]
+    for p in paths:
+        argv += ["--image", str(p)]
     argv += PRESETS[preset]
     argv += ["--format", "glb", "--output", str(out_dir)]
     if api_key.strip():
@@ -57,18 +153,16 @@ def generar(files: list, preset: str, altura_mm: float, api_key: str,
     args = rodin_pipeline.build_parser().parse_args(argv)
 
     try:
-        import requests
         session = requests.Session()
         headers = {"Authorization": f"Bearer {rodin_pipeline.resolve_api_key(args.api_key)}"}
 
-        progress(0.05, desc="Enviando a Rodin…")
+        progress(0.08, desc="Enviando a Rodin…")
         body = rodin_pipeline.submit(args, session, headers)
         task_uuid = body["uuid"]
         sub_key = body["jobs"]["subscription_key"]
 
-        # Sondeo con barra de progreso propia (en vez del wait bloqueante del CLI).
         t0 = time.time()
-        for i in range(args.max_polls):
+        for _ in range(args.max_polls):
             time.sleep(args.poll_interval)
             try:
                 r = session.post(f"{args.base_url}/status", headers=headers,
@@ -77,7 +171,7 @@ def generar(files: list, preset: str, altura_mm: float, api_key: str,
             except Exception:
                 continue
             done = statuses.count("Done")
-            progress(0.05 + 0.6 * (done / max(len(statuses), 1)),
+            progress(0.1 + 0.55 * (done / max(len(statuses), 1)),
                      desc=f"Generando… {done}/{len(statuses)} trabajos ({int(time.time()-t0)} s)")
             if any(s == "Failed" for s in statuses):
                 raise gr.Error("La generación falló en el servidor (los créditos se devuelven).")
@@ -86,72 +180,97 @@ def generar(files: list, preset: str, altura_mm: float, api_key: str,
         else:
             raise gr.Error("Tiempo de espera agotado.")
 
-        progress(0.7, desc="Descargando (las URLs caducan en 10 min)…")
+        progress(0.68, desc="Descargando (las URLs caducan en 10 min)…")
         saved = rodin_pipeline.download_all(args.base_url, headers, session,
                                             task_uuid, out_dir)
     except SystemExit as e:  # los helpers del CLI salen con sys.exit(mensaje)
-        raise gr.Error(str(e))
+        msg = str(e)
+        if "INSUFFICIENT_FUND" in msg or "API_INSUFFICIENT_FUNDS" in msg:
+            msg = ("Sin créditos: la clave de prueba 'vibecoding' agota su cupo diario "
+                   "(se renueva cada día). Pon tu propia API key de Hyper3D o inténtalo mañana.")
+        raise gr.Error(msg)
 
     glb = next((p for p in saved if p.suffix.lower() == ".glb"), None)
     if glb is None:
         raise gr.Error(f"No llegó ningún GLB; archivos: {[p.name for p in saved]}")
 
-    progress(0.75, desc="Verificando y reparando la malla…")
+    progress(0.75, desc="Empaquetando color (OBJ+MTL+textura)…")
+    zip_color = exportar_pack_color(glb, out_dir)
+
+    progress(0.85, desc="Verificando y reparando la malla…")
     mesh = mesh_check.load_mesh(str(glb))
-    mesh.apply_transform(trimesh.transformations.rotation_matrix(3.14159265 / 2, [1, 0, 0]))
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(math.pi / 2, [1, 0, 0]))
     mesh = mesh_check.weld_and_clean(mesh)
     estanca_tras_soldar = mesh.is_watertight
     if not estanca_tras_soldar:
         mesh = mesh_check.repair(mesh, keep_fraction=0.02)
 
-    factor = altura_mm / mesh.extents[2]
-    mesh.apply_scale(factor)
+    mesh.apply_scale(altura_mm / mesh.extents[2])
     stl_path = out_dir / "modelo_imprimible.stl"
     mesh.export(stl_path)
 
     dims = mesh.extents
+    siguiente = (
+        "Sube pack_color.zip al pedido de resina FULL-COLOR de JLC3DP (OBJ + MTL + textura; "
+        "ellos imprimen la figura ya en color, sin pintar)."
+        if modo == MODO_REALISTA else
+        "Importa modelo.obj (del ZIP) en Bambu Studio: detecta la textura y asigna los "
+        "colores a los filamentos del AMS (colores planos, ideal para este estilo). "
+        "El STL sirve para impresión monocolor."
+    )
     informe = (
+        f"Modo: {modo}\nPreset: {preset}\n"
         f"Caras: {len(mesh.faces):,}  |  Estanca (watertight): {mesh.is_watertight}"
         f"{' (tras soldar costuras UV)' if estanca_tras_soldar else ' (tras reparación)'}\n"
         f"Componentes: {mesh.body_count}  |  Normales consistentes: {mesh.is_winding_consistent}\n"
         f"Dimensiones: {dims[0]:.1f} × {dims[1]:.1f} × {dims[2]:.1f} mm\n"
-        f"Preset: {preset}\n"
-        f"Siguiente paso: abre el STL en PrusaSlicer/Lychee (resina: huecos 2-3 mm de pared "
-        f"y ≥2 drenajes de 3-4 mm si lo vacías; soportes árbol en mentón/nariz/pelo)."
+        f"Siguiente paso: {siguiente}"
     )
     progress(1.0, desc="Listo")
-    return str(glb), str(stl_path), informe
+    return (str(glb), str(stl_path), str(zip_color), informe,
+            str(imagen_estilizada) if imagen_estilizada else None)
 
 
 def build_ui() -> gr.Blocks:
-    with gr.Blocks(title="Foto → Figura 3D imprimible (Rodin)") as demo:
+    with gr.Blocks(title="Foto → Figura 3D en color") as demo:
         gr.Markdown(
-            "# 🧍→🗿 Foto a figura 3D imprimible\n"
+            "# 🧍→🗿 Foto a figura 3D imprimible en color\n"
             "Sube **1–5 fotos** (la primera manda en la textura; para caras: frontal + "
-            "perfiles estrictos + nuca), elige preset y pulsa Generar. "
-            "Sin clave API usa la clave de prueba gratuita `vibecoding` (limitada)."
+            "perfiles + nuca). Elige el tipo de figura: **realista** (pack de color para "
+            "servicio de impresión full-color) o **cartoon** (la foto se estiliza primero "
+            "y se imprime en FDM multicolor). Sin clave API de Hyper3D usa la clave de "
+            "prueba gratuita `vibecoding` (limitada)."
         )
         with gr.Row():
             with gr.Column(scale=1):
                 fotos = gr.File(label="Fotos (1–5)", file_count="multiple",
                                 file_types=["image"], type="filepath")
+                modo = gr.Radio([MODO_REALISTA, MODO_CARTOON], label="Tipo de figura",
+                                value=MODO_REALISTA)
                 preset = gr.Dropdown(list(PRESETS), label="Preset de calidad",
                                      value="Alta calidad (~2-4 min, 1M caras)")
                 altura = gr.Slider(30, 300, value=120, step=5,
                                    label="Altura de impresión (mm)")
                 api_key = gr.Textbox(label="API key de Hyper3D (opcional)", type="password",
                                      placeholder="vacío = clave de prueba 'vibecoding'")
-                boton = gr.Button("🚀 Generar modelo 3D", variant="primary")
+                gemini_key = gr.Textbox(label="API key de Gemini (solo modo cartoon)",
+                                        type="password",
+                                        placeholder="vacío = variable GEMINI_API_KEY")
+                boton = gr.Button("🚀 Generar figura", variant="primary")
+                estilizada = gr.Image(label="Imagen estilizada (entrada a Rodin)",
+                                      interactive=False)
             with gr.Column(scale=2):
                 visor = gr.Model3D(label="Modelo generado (GLB con textura)",
                                    clear_color=[0.94, 0.94, 0.94, 1.0], height=420)
-                stl_out = gr.File(label="STL imprimible (estanco, escalado)")
-                informe = gr.Textbox(label="Informe de imprimibilidad", lines=6)
-        boton.click(generar, inputs=[fotos, preset, altura, api_key],
-                    outputs=[visor, stl_out, informe])
+                zip_out = gr.File(label="Pack de color (OBJ+MTL+textura) — JLC3DP / Bambu Studio")
+                stl_out = gr.File(label="STL (geometría sola, para impresión monocolor)")
+                informe = gr.Textbox(label="Informe", lines=7)
+        boton.click(generar, inputs=[fotos, modo, preset, altura, api_key, gemini_key],
+                    outputs=[visor, stl_out, zip_out, informe, estilizada])
         gr.Markdown(
             "⚠️ Solo fotos propias o con consentimiento expreso de la persona retratada "
-            "(LO 1/1982). Nada de famosos ni personajes con marca si el destino es la venta."
+            "(LO 1/1982). Estilo cartoon genérico: no uses marcas ni personajes con "
+            "copyright si el destino es la venta."
         )
     return demo
 
