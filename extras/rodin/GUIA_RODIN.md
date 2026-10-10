@@ -114,6 +114,16 @@ Business para Gen-2.5"), `NO_ACTIVE_SUBSCRIPTION`. Los fallos devuelven los cré
   hd_texture, texture_delight, addons=HighPack`.
 - **Borrador rápido** (~20–40 s, validado en nuestra prueba): `tier=Gen-2.5-Low,
   material=Shaded, mesh_mode=Raw, quality_override=20000, texture_mode=low`.
+- **Busto hiperrealista desde fotos de móvil** (tutorial de BioMakers, analizado con
+  Gemini — el flujo experto exacto para caras reales):
+  `tier=Gen-2.5-Extreme-High` (+0,5 cr) + **`is_micro=true`** (incrusta poros, párpados y
+  surcos del pelo EN la geometría — crucial para imprimir, porque los mapas de normales no
+  se imprimen) + **`texture_delight=true`** (neutraliza las sombras de las fotos de móvil)
+  + `texture_mode=extreme-high` + `addons=HighPack` (12K) + `mesh_mode=Raw` con el máximo
+  de caras. Entrada: frente + **perfiles estrictos izquierdo y derecho + nuca** (sin la
+  nuca y los perfiles, la IA deforma la parte trasera y las orejas). Impresión del
+  tutorial: Bambu Studio con soportes árbol en mentón/cejas/nariz/pelo, FDM en filamento
+  gris claro; para máximo detalle facial, resina.
 
 ---
 
@@ -313,5 +323,7 @@ python mesh_check.py ./out/base_basic_pbr.glb --repair --height-mm 120 --out fig
   `github.com/sn4k3/UVtools`; `pyvista/pymeshfix`; 3dnatives (Formnext Asia 2026)
 - Negocio/legal ES-UE: BOE LO 1/1982; STS 486/2022; AEPD; Comisión Europea (AI Act art. 50);
   Etsy Creativity Standards
-- Tutoriales: Kuttercraft (vídeo analizado), Scenario/Runware/WaveSpeed (espejos de la API),
-  geeky-gadgets (flujo multi-vista Nano Banana)
+- Tutoriales: Kuttercraft (imagen 2D→impresión, analizado vía Gemini), BioMakers (busto
+  hiperrealista desde fotos de móvil con Gen-2.5 Extreme-High+Micro+Delight, analizado vía
+  Gemini), Scenario/Runware/WaveSpeed (espejos de la API), geeky-gadgets (flujo multi-vista
+  Nano Banana)
