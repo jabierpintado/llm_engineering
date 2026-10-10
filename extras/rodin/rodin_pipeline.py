@@ -74,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--highpack", action="store_true", help="Addon HighPack: texturas 4K (+1 credito)")
     p.add_argument("--use-original-alpha", action="store_true",
                    help="Usa el canal alfa de la imagen (fondo ya recortado)")
+    p.add_argument("--is-micro", action="store_true",
+                   help="Micro-relieve en la geometria (poros, pliegues); SOLO valido con tier Gen-2.5-Extreme-High")
     p.add_argument("--api-key", default=None,
                    help="Clave API (por defecto: env HYPER3D_API_KEY, si no la clave de prueba 'vibecoding')")
     p.add_argument("--base-url", default=DEFAULT_BASE_URL)
@@ -122,6 +124,8 @@ def submit(args: argparse.Namespace, session: requests.Session, headers: dict) -
         data.append(("texture_mode", args.texture_mode))
     if args.use_original_alpha:
         data.append(("use_original_alpha", "true"))
+    if args.is_micro:
+        data.append(("is_micro", "true"))
     if args.highpack:
         data.append(("addons", "HighPack"))
 

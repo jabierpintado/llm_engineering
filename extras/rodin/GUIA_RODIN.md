@@ -294,6 +294,7 @@ según plan. Material resina figura 12 cm: ~1–4 $. El resto es margen y mano d
 
 | Archivo | Qué hace |
 |---|---|
+| `app.py` | **Prueba de concepto con interfaz web (Gradio)**: sube fotos → visor 3D + STL imprimible |
 | `rodin_pipeline.py` | Cliente API completo: enviar → sondear → descargar (defaults de impresión) |
 | `mesh_check.py` | Informe + reparación de imprimibilidad (trimesh/pymeshfix) + escalado a mm |
 | `blender_remesh.py` | Remesh por vóxeles con Blender headless (fallback a prueba de todo) |
@@ -307,6 +308,10 @@ pip install -r requirements.txt pymeshfix
 export HYPER3D_API_KEY=...   # u omite para usar la clave de prueba 'vibecoding'
 python rodin_pipeline.py --image figura.png --tier Gen-2.5-High --format glb --output ./out
 python mesh_check.py ./out/base_basic_pbr.glb --repair --height-mm 120 --out figura_print.stl
+
+# o la interfaz web (visor 3D incluido):
+pip install gradio
+python app.py            # abre http://127.0.0.1:7860  (--share para enlace publico)
 ```
 
 ## 12. Fuentes principales
