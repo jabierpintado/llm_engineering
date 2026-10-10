@@ -40,6 +40,10 @@ MODO_CARTOON = "Cartoon estilizado"
 # Ambos modos producen el pack de color para impresion full-color de servicio
 # (p. ej. JLC3DP resina full-color): producto premium sin pintura a mano.
 
+PROV_NATIVO = "Hyper3D nativo (clave propia o 'vibecoding')"
+PROV_FAL = "fal.ai (pago por uso, ~0,40 $/generación)"
+FAL_ENDPOINT = "fal-ai/hyper3d/rodin/v2.5"
+
 PRESETS = {
     "Borrador rápido (~30 s)": [
         "--tier", "Gen-2.5-Low", "--mesh-mode", "Raw", "--quality-override", "20000",
@@ -115,6 +119,77 @@ def estilizar_cartoon(foto: Path, api_key: str, out_dir: Path) -> Path:
     raise gr.Error(f"Gemini no devolvió imagen (modelo {modelo}). Respuesta: {texto}")
 
 
+def generar_fal(paths: list, args, fal_key: str, out_dir: Path, progress) -> Path:
+    """Genera via fal.ai (revendedor oficial de Rodin, sin suscripcion). Devuelve el GLB."""
+    try:
+        import fal_client
+    except ImportError:
+        raise gr.Error("Falta el cliente de fal: pip install fal-client")
+    client = fal_client.SyncClient(key=fal_key)
+
+    progress(0.05, desc="Subiendo imágenes a fal.ai…")
+    urls = [client.upload_file(str(p)) for p in paths]
+
+    argumentos = {
+        "input_image_urls": urls,
+        "tier": args.tier,
+        "geometry_file_format": "glb",
+        "material": args.material,
+        "quality": args.quality,
+    }
+    if args.seed is not None:
+        argumentos["seed"] = args.seed
+    if args.highpack:
+        argumentos["addons"] = ["HighPack"]
+    if args.is_micro:
+        argumentos["is_micro"] = True
+    if args.bbox:
+        argumentos["bbox_condition"] = args.bbox
+
+    progress(0.1, desc="Enviando a Rodin vía fal.ai…")
+
+    def _submit(argus):
+        handle = client.submit(FAL_ENDPOINT, arguments=argus)
+        t0 = time.time()
+        while True:
+            st = handle.status(with_logs=False)
+            nombre = type(st).__name__
+            if nombre == "Completed":
+                return handle.get()
+            progress(min(0.65, 0.1 + (time.time() - t0) / 300 * 0.5),
+                     desc=f"Generando en fal.ai… ({nombre.lower()}, {int(time.time()-t0)} s)")
+            time.sleep(5)
+
+    try:
+        resultado = _submit(argumentos)
+    except Exception as e:
+        texto = str(e)
+        # Si fal rechaza algun campo (el esquema del revendedor cambia), se
+        # reintenta una vez sin los campos opcionales conflictivos.
+        opcionales = ["addons", "is_micro", "bbox_condition", "quality", "material"]
+        if any(k in texto for k in opcionales):
+            for k in opcionales:
+                if k in texto:
+                    argumentos.pop(k, None)
+            try:
+                resultado = _submit(argumentos)
+            except Exception as e2:
+                raise gr.Error(f"fal.ai rechazó la petición: {e2}")
+        else:
+            raise gr.Error(f"Error de fal.ai: {texto[:400]}")
+
+    mesh = resultado.get("model_mesh") or {}
+    url = mesh.get("url")
+    if not url:
+        raise gr.Error(f"fal.ai no devolvió modelo: {json.dumps(resultado)[:300]}")
+    progress(0.68, desc="Descargando modelo…")
+    glb = out_dir / (mesh.get("file_name") or "modelo_fal.glb")
+    with requests.get(url, stream=True, timeout=600) as r:
+        r.raise_for_status()
+        glb.write_bytes(r.content)
+    return glb
+
+
 def exportar_pack_color(glb: Path, out_dir: Path) -> Path:
     """GLB -> carpeta con OBJ+MTL+textura -> ZIP (valido para JLC3DP y Bambu Studio)."""
     pack = out_dir / "pack_color"
@@ -124,8 +199,9 @@ def exportar_pack_color(glb: Path, out_dir: Path) -> Path:
     return Path(shutil.make_archive(str(out_dir / "pack_color"), "zip", pack))
 
 
-def generar(files: list, modo: str, preset: str, altura_mm: float, textura_4k: bool,
-            api_key: str, gemini_key: str, progress=gr.Progress()):
+def generar(files: list, modo: str, proveedor: str, preset: str, altura_mm: float,
+            textura_4k: bool, api_key: str, fal_key: str, gemini_key: str,
+            progress=gr.Progress()):
     if not files:
         raise gr.Error("Sube al menos una foto.")
     if len(files) > 5:
@@ -155,6 +231,16 @@ def generar(files: list, modo: str, preset: str, altura_mm: float, textura_4k: b
     if api_key.strip():
         argv += ["--api-key", api_key.strip()]
     args = rodin_pipeline.build_parser().parse_args(argv)
+
+    if proveedor == PROV_FAL:
+        fkey = fal_key.strip() or os.environ.get("FAL_KEY", "")
+        if not fkey:
+            raise gr.Error("fal.ai necesita una FAL_KEY (campo de la izquierda o variable FAL_KEY).")
+        if args.quality_override and args.quality_override <= 20000:
+            args.quality = "extra-low"  # aproximacion del modo rapido en fal
+        glb = generar_fal(paths, args, fkey, out_dir, progress)
+        return _postproceso(glb, modo, preset, altura_mm, out_dir,
+                            imagen_estilizada, progress)
 
     try:
         session = requests.Session()
@@ -197,7 +283,11 @@ def generar(files: list, modo: str, preset: str, altura_mm: float, textura_4k: b
     glb = next((p for p in saved if p.suffix.lower() == ".glb"), None)
     if glb is None:
         raise gr.Error(f"No llegó ningún GLB; archivos: {[p.name for p in saved]}")
+    return _postproceso(glb, modo, preset, altura_mm, out_dir, imagen_estilizada, progress)
 
+
+def _postproceso(glb: Path, modo: str, preset: str, altura_mm: float,
+                 out_dir: Path, imagen_estilizada, progress):
     progress(0.75, desc="Empaquetando color (OBJ+MTL+textura)…")
     zip_color = exportar_pack_color(glb, out_dir)
 
@@ -248,6 +338,8 @@ def build_ui() -> gr.Blocks:
                                 file_types=["image"], type="filepath")
                 modo = gr.Radio([MODO_REALISTA, MODO_CARTOON], label="Estilo de figura",
                                 value=MODO_REALISTA)
+                proveedor = gr.Radio([PROV_NATIVO, PROV_FAL], label="Proveedor de generación",
+                                     value=PROV_NATIVO)
                 textura_4k = gr.Checkbox(label="Textura 4K (HighPack, +1 crédito) — "
                                                "recomendado para impresión full-color",
                                          value=False)
@@ -255,8 +347,10 @@ def build_ui() -> gr.Blocks:
                                      value="Alta calidad (~2-4 min, 1M caras)")
                 altura = gr.Slider(30, 300, value=120, step=5,
                                    label="Altura de impresión (mm)")
-                api_key = gr.Textbox(label="API key de Hyper3D (opcional)", type="password",
+                api_key = gr.Textbox(label="API key de Hyper3D (proveedor nativo)", type="password",
                                      placeholder="vacío = clave de prueba 'vibecoding'")
+                fal_key = gr.Textbox(label="FAL_KEY (proveedor fal.ai)", type="password",
+                                     placeholder="vacío = variable FAL_KEY")
                 gemini_key = gr.Textbox(label="API key de Gemini (solo modo cartoon)",
                                         type="password",
                                         placeholder="vacío = variable GEMINI_API_KEY")
@@ -270,7 +364,8 @@ def build_ui() -> gr.Blocks:
                 stl_out = gr.File(label="STL (geometría sola, para impresión monocolor)")
                 informe = gr.Textbox(label="Informe", lines=7)
         boton.click(generar,
-                    inputs=[fotos, modo, preset, altura, textura_4k, api_key, gemini_key],
+                    inputs=[fotos, modo, proveedor, preset, altura, textura_4k,
+                            api_key, fal_key, gemini_key],
                     outputs=[visor, stl_out, zip_out, informe, estilizada])
         gr.Markdown(
             "⚠️ Solo fotos propias o con consentimiento expreso de la persona retratada "
