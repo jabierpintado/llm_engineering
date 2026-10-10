@@ -35,8 +35,10 @@ import trimesh
 import mesh_check
 import rodin_pipeline
 
-MODO_REALISTA = "Realista — color para servicio de impresión (JLC3DP)"
-MODO_CARTOON = "Cartoon estilizado — FDM multicolor (Bambu AMS)"
+MODO_REALISTA = "Realista"
+MODO_CARTOON = "Cartoon estilizado"
+# Ambos modos producen el pack de color para impresion full-color de servicio
+# (p. ej. JLC3DP resina full-color): producto premium sin pintura a mano.
 
 PRESETS = {
     "Borrador rápido (~30 s)": [
@@ -122,7 +124,7 @@ def exportar_pack_color(glb: Path, out_dir: Path) -> Path:
     return Path(shutil.make_archive(str(out_dir / "pack_color"), "zip", pack))
 
 
-def generar(files: list, modo: str, preset: str, altura_mm: float,
+def generar(files: list, modo: str, preset: str, altura_mm: float, textura_4k: bool,
             api_key: str, gemini_key: str, progress=gr.Progress()):
     if not files:
         raise gr.Error("Sube al menos una foto.")
@@ -147,6 +149,8 @@ def generar(files: list, modo: str, preset: str, altura_mm: float,
     for p in paths:
         argv += ["--image", str(p)]
     argv += PRESETS[preset]
+    if textura_4k:
+        argv += ["--highpack"]
     argv += ["--format", "glb", "--output", str(out_dir)]
     if api_key.strip():
         argv += ["--api-key", api_key.strip()]
@@ -211,12 +215,9 @@ def generar(files: list, modo: str, preset: str, altura_mm: float,
 
     dims = mesh.extents
     siguiente = (
-        "Sube pack_color.zip al pedido de resina FULL-COLOR de JLC3DP (OBJ + MTL + textura; "
-        "ellos imprimen la figura ya en color, sin pintar)."
-        if modo == MODO_REALISTA else
-        "Importa modelo.obj (del ZIP) en Bambu Studio: detecta la textura y asigna los "
-        "colores a los filamentos del AMS (colores planos, ideal para este estilo). "
-        "El STL sirve para impresión monocolor."
+        "Sube pack_color.zip a un pedido de resina FULL-COLOR (p. ej. JLC3DP): OBJ + MTL + "
+        "textura — imprimen la figura ya en color, acabado premium sin pintar. "
+        "El STL es solo el respaldo para impresión monocolor."
     )
     informe = (
         f"Modo: {modo}\nPreset: {preset}\n"
@@ -236,17 +237,20 @@ def build_ui() -> gr.Blocks:
         gr.Markdown(
             "# 🧍→🗿 Foto a figura 3D imprimible en color\n"
             "Sube **1–5 fotos** (la primera manda en la textura; para caras: frontal + "
-            "perfiles + nuca). Elige el tipo de figura: **realista** (pack de color para "
-            "servicio de impresión full-color) o **cartoon** (la foto se estiliza primero "
-            "y se imprime en FDM multicolor). Sin clave API de Hyper3D usa la clave de "
-            "prueba gratuita `vibecoding` (limitada)."
+            "perfiles + nuca). Elige el estilo: **realista** o **cartoon** (la foto se "
+            "estiliza primero con Gemini). En ambos casos obtienes el **pack de color** "
+            "para impresión full-color de servicio (producto premium, sin pintura a mano). "
+            "Sin clave API de Hyper3D usa la clave de prueba gratuita `vibecoding` (limitada)."
         )
         with gr.Row():
             with gr.Column(scale=1):
                 fotos = gr.File(label="Fotos (1–5)", file_count="multiple",
                                 file_types=["image"], type="filepath")
-                modo = gr.Radio([MODO_REALISTA, MODO_CARTOON], label="Tipo de figura",
+                modo = gr.Radio([MODO_REALISTA, MODO_CARTOON], label="Estilo de figura",
                                 value=MODO_REALISTA)
+                textura_4k = gr.Checkbox(label="Textura 4K (HighPack, +1 crédito) — "
+                                               "recomendado para impresión full-color",
+                                         value=False)
                 preset = gr.Dropdown(list(PRESETS), label="Preset de calidad",
                                      value="Alta calidad (~2-4 min, 1M caras)")
                 altura = gr.Slider(30, 300, value=120, step=5,
@@ -262,10 +266,11 @@ def build_ui() -> gr.Blocks:
             with gr.Column(scale=2):
                 visor = gr.Model3D(label="Modelo generado (GLB con textura)",
                                    clear_color=[0.94, 0.94, 0.94, 1.0], height=420)
-                zip_out = gr.File(label="Pack de color (OBJ+MTL+textura) — JLC3DP / Bambu Studio")
+                zip_out = gr.File(label="Pack de color (OBJ+MTL+textura) — para impresión full-color")
                 stl_out = gr.File(label="STL (geometría sola, para impresión monocolor)")
                 informe = gr.Textbox(label="Informe", lines=7)
-        boton.click(generar, inputs=[fotos, modo, preset, altura, api_key, gemini_key],
+        boton.click(generar,
+                    inputs=[fotos, modo, preset, altura, textura_4k, api_key, gemini_key],
                     outputs=[visor, stl_out, zip_out, informe, estilizada])
         gr.Markdown(
             "⚠️ Solo fotos propias o con consentimiento expreso de la persona retratada "
