@@ -52,7 +52,10 @@ def report(mesh: trimesh.Trimesh, label: str) -> None:
 
 
 def weld_and_clean(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
-    mesh.merge_vertices()
+    # merge_tex/merge_norm: suelda vertices duplicados aunque difieran en UV o
+    # normal (los GLB/STL de Rodin vienen fragmentados por costuras de textura;
+    # para imprimir, las UV no importan).
+    mesh.merge_vertices(merge_tex=True, merge_norm=True)
     mesh.update_faces(mesh.nondegenerate_faces())
     mesh.update_faces(mesh.unique_faces())
     mesh.remove_unreferenced_vertices()
@@ -62,20 +65,44 @@ def weld_and_clean(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
 def repair(mesh: trimesh.Trimesh, keep_fraction: float) -> trimesh.Trimesh:
     # 1) Quitar islas flotantes: conservar componentes con un numero de caras
     #    relevante respecto a la mayor (los "floaters" tipicos de mallas IA).
-    parts = mesh.split(only_watertight=False)
-    if len(parts) > 1:
-        biggest = max(len(p.faces) for p in parts)
-        kept = [p for p in parts if len(p.faces) >= biggest * keep_fraction]
-        dropped = len(parts) - len(kept)
-        if dropped:
-            print(f"  reparacion: eliminadas {dropped} islas pequenas (de {len(parts)} componentes)")
-        mesh = trimesh.util.concatenate(kept) if len(kept) > 1 else kept[0]
+    #    Se usa el grafo de adyacencia de caras (ligero en memoria) en lugar
+    #    de mesh.split(), que revienta con cientos de islas.
+    comps = trimesh.graph.connected_components(
+        mesh.face_adjacency, min_len=0, nodes=np.arange(len(mesh.faces)))
+    if len(comps) > 1:
+        biggest = max(len(c) for c in comps)
+        keep = np.zeros(len(mesh.faces), dtype=bool)
+        kept = 0
+        for c in comps:
+            if len(c) >= biggest * keep_fraction:
+                keep[c] = True
+                kept += 1
+        if kept < len(comps):
+            print(f"  reparacion: eliminadas {len(comps) - kept} islas pequenas "
+                  f"(de {len(comps)} componentes)")
+            mesh.update_faces(keep)
+            mesh.remove_unreferenced_vertices()
 
-    # 2) Rellenar agujeros y corregir orientacion de normales.
+    # 2) Rellenar agujeros pequenos y corregir orientacion de normales.
     trimesh.repair.fill_holes(mesh)
     trimesh.repair.fix_normals(mesh)
-    trimesh.repair.fix_inversion(mesh)
     mesh = weld_and_clean(mesh)
+
+    # 3) Si sigue abierta, pasada con MeshFix (pymeshfix): reconstruye una
+    #    unica malla estanca que envuelve el solido. Es la via con garantias
+    #    para mallas de IA (fill_holes de trimesh solo tapa agujeros de 1 cara).
+    if not mesh.is_watertight:
+        try:
+            import pymeshfix
+        except ImportError:
+            print("  (pymeshfix no instalado: pip install pymeshfix para la reparacion fuerte)")
+            return mesh
+        print("  reparacion fuerte con MeshFix (puede unificar/absorber cavidades)...")
+        fixer = pymeshfix.MeshFix(mesh.vertices.copy(), mesh.faces.copy())
+        fixer.repair()
+        fixed = trimesh.Trimesh(fixer.v, fixer.f)
+        if len(fixed.faces) > 0:
+            mesh = weld_and_clean(fixed)
     return mesh
 
 
@@ -91,6 +118,13 @@ def main() -> None:
     args = p.parse_args()
 
     mesh = load_mesh(args.input)
+
+    # GLB/GLTF usan eje Y hacia arriba; STL/slicers esperan Z hacia arriba.
+    if args.input.lower().endswith((".glb", ".gltf")):
+        mesh.apply_transform(trimesh.transformations.rotation_matrix(
+            np.pi / 2, [1, 0, 0]))
+        print("(GLB detectado: rotado Y-arriba -> Z-arriba para impresion)")
+
     report(mesh, "ORIGINAL (tal cual viene del archivo)")
 
     mesh = weld_and_clean(mesh)
