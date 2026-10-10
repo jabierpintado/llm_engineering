@@ -106,10 +106,24 @@ def repair(mesh: trimesh.Trimesh, keep_fraction: float) -> trimesh.Trimesh:
     return mesh
 
 
+def aplanar_base(mesh: trimesh.Trimesh, mm: float) -> trimesh.Trimesh:
+    """Corta los 'mm' inferiores y tapa el corte: base plana con buena adhesion
+    de primera capa (consejo estandar de los expertos para figuras de IA)."""
+    zmin = mesh.bounds[0][2]
+    cortada = trimesh.intersections.slice_mesh_plane(
+        mesh, plane_normal=[0, 0, 1], plane_origin=[0, 0, zmin + mm], cap=True)
+    if cortada is None or len(cortada.faces) == 0:
+        print("  AVISO: el aplanado de base fallo; se mantiene la malla original")
+        return mesh
+    return weld_and_clean(cortada)
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Chequeo/reparacion de imprimibilidad de mallas")
     p.add_argument("input", help="Archivo STL/OBJ/GLB/PLY")
     p.add_argument("--repair", action="store_true", help="Intenta reparar (islas, agujeros, normales)")
+    p.add_argument("--flatten-mm", type=float, default=0.0,
+                   help="Aplana la base cortando este grosor en mm (tras escalar); 1.0 recomendado")
     p.add_argument("--keep-fraction", type=float, default=0.02,
                    help="Umbral de caras (fraccion de la componente mayor) para conservar islas (def. 0.02)")
     p.add_argument("--height-mm", type=float, default=None,
@@ -147,6 +161,10 @@ def main() -> None:
         mesh.apply_scale(factor)
         print(f"\nEscalado x{factor:.4f} -> altura {mesh.extents[2]:.1f} mm "
               f"({mesh.extents[0]:.1f} x {mesh.extents[1]:.1f} x {mesh.extents[2]:.1f} mm)")
+
+    if args.flatten_mm > 0:
+        mesh = aplanar_base(mesh, args.flatten_mm)
+        print(f"Base aplanada: corte de {args.flatten_mm} mm, estanca: {mesh.is_watertight}")
 
     if args.out:
         mesh.export(args.out)

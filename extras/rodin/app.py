@@ -300,6 +300,8 @@ def _postproceso(glb: Path, modo: str, preset: str, altura_mm: float,
         mesh = mesh_check.repair(mesh, keep_fraction=0.02)
 
     mesh.apply_scale(altura_mm / mesh.extents[2])
+    # Consejo unanime de los expertos: base plana (~1 mm) para la primera capa.
+    mesh = mesh_check.aplanar_base(mesh, 1.0)
     stl_path = out_dir / "modelo_imprimible.stl"
     mesh.export(stl_path)
 
@@ -314,7 +316,8 @@ def _postproceso(glb: Path, modo: str, preset: str, altura_mm: float,
         f"Caras: {len(mesh.faces):,}  |  Estanca (watertight): {mesh.is_watertight}"
         f"{' (tras soldar costuras UV)' if estanca_tras_soldar else ' (tras reparación)'}\n"
         f"Componentes: {mesh.body_count}  |  Normales consistentes: {mesh.is_winding_consistent}\n"
-        f"Dimensiones: {dims[0]:.1f} × {dims[1]:.1f} × {dims[2]:.1f} mm\n"
+        f"Dimensiones: {dims[0]:.1f} × {dims[1]:.1f} × {dims[2]:.1f} mm  |  Base aplanada 1 mm\n"
+        f"Revisa antes de imprimir: manos/dedos (Rodin los alarga o fusiona a veces) y la espalda.\n"
         f"Siguiente paso: {siguiente}"
     )
     progress(1.0, desc="Listo")

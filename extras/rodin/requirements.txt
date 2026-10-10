@@ -6,3 +6,5 @@ pymeshfix>=0.17    # reparacion fuerte de mallas
 fal-client>=0.4    # proveedor fal.ai (pago por uso)
 # Opcional para reparacion avanzada:
 # pymeshlab>=2023.12
+shapely>=2.0       # corte/aplanado de base (slice_mesh_plane)
+mapbox-earcut>=1.0 # triangulacion para tapar el corte de base

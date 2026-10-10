@@ -196,6 +196,37 @@ rodin_pipeline.py  →  mesh_check.py  →  (si hace falta) blender_remesh.py  �
 
 ---
 
+### Consejos consolidados de los vídeos de expertos (analizados vía Gemini, oct-2026)
+
+De 7 vídeos populares sobre Rodin (3D Revolution, MK Expert, A3D Prints —en español—,
+AI Lockup, Dan Smart Tutorials, más el walkthrough oficial y uno de BANG para juegos):
+
+- **Multi-vista o espalda inventada**: una sola foto frontal hace que la IA invente la
+  trasera (espinas, colas, peinados planos, cuernos atravesando alas). Mínimo frente +
+  perfiles + trasera; Hyper3D tiene opción *Back-view/Remix* que genera la vista trasera
+  automáticamente manteniendo estilo y paleta.
+- **Revisar SIEMPRE manos y dedos**: el fallo más repetido de Rodin — dedos alargados,
+  fusionados "como ramas" o de más. Corregir en el *Mesh Editor* web integrado
+  (smooth/flatten/mirror) o en Blender antes de imprimir.
+- **Detalle en la geometría, no en la textura**: tiers altos (*Extreme-High*, ~80 s) con
+  modos *Micro* y *Detailed* meten el relieve en los vértices (la textura no se imprime).
+  Mallas de trabajo: 200k quads o 1–2M triángulos (hasta 10M disponibles).
+- **Iterar gratis antes de pagar**: hasta 50 *redos* de geometría gratuitos por generación
+  (plan Business) antes de *Confirm*; se puede retocar el prompt en cada redo.
+- **Aplanar la base ~1 mm** (corte + tapa) para primera capa estable — automatizado ya en
+  `mesh_check.py --flatten-mm` y en la app.
+- **BANG to Parts para voladizos y color**: despiezar el modelo evita soportes complejos y
+  permite multicolor SIN AMS (cada pieza en su placa/color y pegado posterior); en Bambu
+  Studio, *Separate to Objects*; con AMS, torre de purga.
+- **Perfil FDM de figura (consenso Bambu)**: boquilla 0,4 / capa 0,20 mm / 2 perímetros /
+  10–15% relleno / soportes árbol automáticos + repaso manual bajo barbillas, brazos y alas.
+- **Material**: PLA **mate** (especialmente negro) disimula las líneas de capa hasta parecer
+  inyección; PETG si se necesita resistencia; para premium, resina/full-color (sección 6).
+- **STL directo si es monocolor** (no descargar texturas innecesarias); conversor de
+  formatos integrado en la plataforma si hace falta otro.
+- **ControlNets de Rodin** (bbox, voxel, point cloud) para forzar medidas y volúmenes; en
+  Bambu Studio, volúmenes negativos para taladros y *Add Part* para macizar piezas huecas.
+
 ## 7. El pipeline del agente completo (arquitectura objetivo)
 
 ```
