@@ -8,3 +8,4 @@ fal-client>=0.4    # proveedor fal.ai (pago por uso)
 # pymeshlab>=2023.12
 shapely>=2.0       # corte/aplanado de base (slice_mesh_plane)
 mapbox-earcut>=1.0 # triangulacion para tapar el corte de base
+huggingface_hub<1.0   # compatibilidad con gradio en Python 3.9

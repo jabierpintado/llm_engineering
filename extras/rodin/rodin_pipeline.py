@@ -85,7 +85,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def resolve_api_key(cli_key: str | None) -> str:
+def resolve_api_key(cli_key=None) -> str:
     key = cli_key or os.environ.get("HYPER3D_API_KEY") or FREE_TEST_KEY
     if key == FREE_TEST_KEY:
         print("AVISO: usando la clave de prueba gratuita 'vibecoding' (limitada). "
