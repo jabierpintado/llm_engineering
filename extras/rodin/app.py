@@ -66,8 +66,12 @@ PRESETS = {
 PROMPT_CARTOON_BASE = (
     " Cuerpo completo de pie sobre una peana cilíndrica sencilla, fondo blanco "
     "uniforme, iluminación suave de estudio, una sola figura centrada, sin partes "
-    "finas ni elementos sueltos. Conserva el peinado, la ropa y los rasgos "
-    "reconocibles del sujeto de la foto."
+    "finas ni elementos sueltos. IMPORTANTE: es una caricatura idealizada, no un "
+    "retrato realista: piel completamente lisa y uniforme, sin arrugas, líneas de "
+    "expresión, manchas, poros ni texturas realistas de piel; rasgos faciales "
+    "simplificados y amables. El parecido debe venir del peinado, el color de pelo, "
+    "la ropa, las gafas si las hay y la forma general de la cara, no del detalle "
+    "fotográfico."
 )
 
 ESTILOS_CARTOON = {
