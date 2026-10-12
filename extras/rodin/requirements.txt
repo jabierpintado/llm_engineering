@@ -7,6 +7,8 @@ fal-client>=0.4    # proveedor fal.ai (pago por uso)
 scipy>=1.11        # requerido por trimesh para el aplanado de base
 shapely>=2.0       # corte/aplanado de base (slice_mesh_plane)
 scipy>=1.11        # requerido por trimesh para slice_mesh_plane (cKDTree)
+networkx>=3.0      # requerido por trimesh para tapar cortes con agujeros
+rtree>=1.0         # indice espacial que usa trimesh junto a networkx
 mapbox-earcut>=1.0 # triangulacion para tapar el corte de base
 # Parches SOLO para Python 3.9 (gradio antiguo):
 huggingface_hub<1.0 ; python_version < "3.10"
