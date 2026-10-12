@@ -110,8 +110,15 @@ def aplanar_base(mesh: trimesh.Trimesh, mm: float) -> trimesh.Trimesh:
     """Corta los 'mm' inferiores y tapa el corte: base plana con buena adhesion
     de primera capa (consejo estandar de los expertos para figuras de IA)."""
     zmin = mesh.bounds[0][2]
-    cortada = trimesh.intersections.slice_mesh_plane(
-        mesh, plane_normal=[0, 0, 1], plane_origin=[0, 0, zmin + mm], cap=True)
+    try:
+        cortada = trimesh.intersections.slice_mesh_plane(
+            mesh, plane_normal=[0, 0, 1], plane_origin=[0, 0, zmin + mm], cap=True)
+    except (ImportError, ModuleNotFoundError) as exc:
+        # Nunca dejar que una dependencia opcional tire abajo una generacion ya
+        # pagada: sin scipy/shapely se salta el aplanado con aviso.
+        print(f"  AVISO: aplanado de base omitido (falta dependencia: {exc}); "
+              f"instala scipy/shapely/mapbox-earcut para activarlo")
+        return mesh
     if cortada is None or len(cortada.faces) == 0:
         print("  AVISO: el aplanado de base fallo; se mantiene la malla original")
         return mesh

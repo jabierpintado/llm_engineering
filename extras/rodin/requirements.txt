@@ -4,6 +4,7 @@ numpy>=1.26
 gradio>=4.0        # interfaz web (app.py)
 pymeshfix>=0.17    # reparacion fuerte de mallas
 fal-client>=0.4    # proveedor fal.ai (pago por uso)
+scipy>=1.11        # requerido por trimesh para el aplanado de base
 shapely>=2.0       # corte/aplanado de base (slice_mesh_plane)
 mapbox-earcut>=1.0 # triangulacion para tapar el corte de base
 # Parches SOLO para Python 3.9 (gradio antiguo):
