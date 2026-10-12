@@ -61,13 +61,43 @@ PRESETS = {
     ],
 }
 
-PROMPT_CARTOON = (
-    "Transforma la foto en una figura coleccionable estilo cartoon 3D: cabeza grande, "
-    "cuerpo pequeño, rasgos simplificados y amables, colores planos y vivos, cuerpo "
-    "completo de pie sobre una peana cilíndrica sencilla, fondo blanco uniforme, "
-    "iluminación suave de estudio, una sola figura centrada. Conserva el peinado, la "
-    "ropa y los rasgos reconocibles del sujeto de la foto."
+# Requisitos comunes a todos los estilos: encuadre y fondo pensados para que la
+# reconstruccion 3D y la impresion salgan bien (sin partes finas ni fondo ruidoso).
+PROMPT_CARTOON_BASE = (
+    " Cuerpo completo de pie sobre una peana cilíndrica sencilla, fondo blanco "
+    "uniforme, iluminación suave de estudio, una sola figura centrada, sin partes "
+    "finas ni elementos sueltos. Conserva el peinado, la ropa y los rasgos "
+    "reconocibles del sujeto de la foto."
 )
+
+ESTILOS_CARTOON = {
+    "Pixar (animación 3D)": (
+        "Transforma la foto en un personaje de película de animación 3D estilo Pixar: "
+        "proporciones caricaturescas pero equilibradas, ojos grandes y expresivos, piel "
+        "y materiales suaves con aspecto de render 3D, colores vivos."
+    ),
+    "Funko Pop (cabezón de vinilo)": (
+        "Transforma la foto en una figura coleccionable de vinilo estilo Funko Pop: "
+        "cabeza cuadrada enorme, ojos negros redondos, sin boca, cuerpo pequeño y "
+        "rígido, colores planos."
+    ),
+    "Chibi (anime cabezón)": (
+        "Transforma la foto en una figura chibi de anime: cabeza muy grande (la mitad "
+        "de la altura total), cuerpo diminuto y rechoncho, ojos enormes brillantes, "
+        "expresión adorable, colores planos y vivos."
+    ),
+    "Plastilina (claymation)": (
+        "Transforma la foto en un muñeco de plastilina artesanal estilo claymation: "
+        "formas redondeadas y gruesas, superficie mate con ligeras huellas de modelado, "
+        "colores saturados, aspecto hecho a mano."
+    ),
+    "Peluche (muñeco suave)": (
+        "Transforma la foto en un muñeco de peluche suave: volúmenes rechonchos y "
+        "redondeados, textura de tela afelpada, costuras visibles sencillas, rasgos "
+        "bordados simplificados, aspecto tierno."
+    ),
+}
+ESTILO_CARTOON_DEFECTO = "Pixar (animación 3D)"
 
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
@@ -89,8 +119,10 @@ def _gemini_image_model(api_key: str) -> str:
     return sorted(candidatos)[-1]
 
 
-def estilizar_cartoon(foto: Path, api_key: str, out_dir: Path) -> Path:
-    """Convierte la foto en imagen de figura cartoon con la API de Gemini."""
+def estilizar_cartoon(foto: Path, api_key: str, out_dir: Path, estilo: str) -> Path:
+    """Convierte la foto en imagen de figura cartoon (segun el estilo) con Gemini."""
+    prompt = ESTILOS_CARTOON.get(estilo, ESTILOS_CARTOON[ESTILO_CARTOON_DEFECTO])
+    prompt += PROMPT_CARTOON_BASE
     modelo = _gemini_image_model(api_key)
     mime = "image/webp" if foto.suffix.lower() == ".webp" else (
         "image/png" if foto.suffix.lower() == ".png" else "image/jpeg")
@@ -99,7 +131,7 @@ def estilizar_cartoon(foto: Path, api_key: str, out_dir: Path) -> Path:
             "parts": [
                 {"inline_data": {"mime_type": mime,
                                  "data": base64.b64encode(foto.read_bytes()).decode()}},
-                {"text": PROMPT_CARTOON},
+                {"text": prompt},
             ]
         }]
     }
@@ -272,9 +304,9 @@ def exportar_pack_color(glb: Path, out_dir: Path) -> Path:
     return Path(shutil.make_archive(str(out_dir / "pack_color"), "zip", pack))
 
 
-def generar(files: list, modo: str, proveedor: str, preset: str, altura_mm: float,
-            textura_4k: bool, api_key: str, fal_key: str, tripo_key: str,
-            gemini_key: str, progress=gr.Progress()):
+def generar(files: list, modo: str, estilo_cartoon: str, proveedor: str, preset: str,
+            altura_mm: float, textura_4k: bool, api_key: str, fal_key: str,
+            tripo_key: str, gemini_key: str, progress=gr.Progress()):
     if not files:
         raise gr.Error("Sube al menos una foto.")
     if len(files) > 5:
@@ -290,9 +322,10 @@ def generar(files: list, modo: str, proveedor: str, preset: str, altura_mm: floa
         if not gkey:
             raise gr.Error("El modo cartoon necesita una clave de Gemini "
                            "(campo de la izquierda o variable GEMINI_API_KEY).")
-        progress(0.02, desc="Estilizando la foto con Gemini…")
-        imagen_estilizada = estilizar_cartoon(paths[0], gkey, out_dir)
+        progress(0.02, desc=f"Estilizando la foto con Gemini ({estilo_cartoon})…")
+        imagen_estilizada = estilizar_cartoon(paths[0], gkey, out_dir, estilo_cartoon)
         paths = [imagen_estilizada]
+        modo = f"{MODO_CARTOON} — {estilo_cartoon}"  # solo para el informe
 
     argv = []
     for p in paths:
@@ -422,6 +455,9 @@ def build_ui() -> gr.Blocks:
                                 file_types=["image"], type="filepath")
                 modo = gr.Radio([MODO_REALISTA, MODO_CARTOON], label="Estilo de figura",
                                 value=MODO_REALISTA)
+                estilo_cartoon = gr.Dropdown(
+                    list(ESTILOS_CARTOON), label="Tipo de cartoon",
+                    value=ESTILO_CARTOON_DEFECTO, visible=False)
                 proveedor = gr.Radio([PROV_NATIVO, PROV_FAL, PROV_TRIPO],
                                      label="Proveedor de generación", value=PROV_NATIVO)
                 textura_4k = gr.Checkbox(label="Textura 4K (HighPack, +1 crédito) — "
@@ -449,9 +485,11 @@ def build_ui() -> gr.Blocks:
                 zip_out = gr.File(label="Pack de color (OBJ+MTL+textura) — para impresión full-color")
                 stl_out = gr.File(label="STL (geometría sola, para impresión monocolor)")
                 informe = gr.Textbox(label="Informe", lines=7)
+        modo.change(lambda m: gr.update(visible=(m == MODO_CARTOON)),
+                    inputs=modo, outputs=estilo_cartoon)
         boton.click(generar,
-                    inputs=[fotos, modo, proveedor, preset, altura, textura_4k,
-                            api_key, fal_key, tripo_key, gemini_key],
+                    inputs=[fotos, modo, estilo_cartoon, proveedor, preset, altura,
+                            textura_4k, api_key, fal_key, tripo_key, gemini_key],
                     outputs=[visor, stl_out, zip_out, informe, estilizada])
         gr.Markdown(
             "⚠️ Solo fotos propias o con consentimiento expreso de la persona retratada "
