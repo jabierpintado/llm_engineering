@@ -210,9 +210,12 @@ def generar_tripo(paths: list, args, tripo_key: str, out_dir: Path, progress) ->
         raise gr.Error(f"Tripo upload fallo (HTTP {r.status_code}): {r.text[:300]}")
     token = body["data"]["image_token"]
 
+    ext = foto.suffix.lstrip(".").lower() or "png"
+    if ext == "jpeg":
+        ext = "jpg"  # Tripo espera "jpg"; "jpeg" (extension tipica de iPhone) falla
     tarea = {
         "type": "image_to_model",
-        "file": {"type": foto.suffix.lstrip(".").lower() or "png", "file_token": token},
+        "file": {"type": ext, "file_token": token},
         "texture": True,
         "pbr": True,
     }
